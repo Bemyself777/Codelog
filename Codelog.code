@@ -1,0 +1,246 @@
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_quill/flutter_quill.dart' as quill;
+import 'dart:convert';
+
+void main() {
+  runApp(CodeNotesApp());
+}
+
+class CodeNotesApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'CodeNotes',
+      theme: ThemeData(
+        brightness: Brightness.light,
+        primarySwatch: Colors.blue,
+      ),
+      home: NotesScreen(),
+    );
+  }
+}
+
+class NotesScreen extends StatefulWidget {
+  @override
+  _NotesScreenState createState() => _NotesScreenState();
+}
+
+class _NotesScreenState extends State<NotesScreen> {
+  Map<String, String> _notes = {}; // 笔记名称 -> 笔记内容
+  String _selectedNote = "";
+  quill.QuillController _controller = quill.QuillController.basic();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNotes();
+  }
+
+  Future<void> _loadNotes() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _notes = Map<String, String>.from(
+          jsonDecode(prefs.getString('notes') ?? '{}'));
+      if (_notes.isNotEmpty) {
+        _selectedNote = _notes.keys.first;
+        _loadNoteContent(_selectedNote);
+      }
+    });
+  }
+
+  Future<void> _saveNotes() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    prefs.setString('notes', jsonEncode(_notes));
+  }
+
+  void _loadNoteContent(String noteName) {
+    _controller = quill.QuillController(
+      document: quill.Document.fromJson(
+          jsonDecode(_notes[noteName] ?? jsonEncode([]))),
+      selection: TextSelection.collapsed(offset: 0),
+    );
+  }
+
+  void _addNote() {
+    TextEditingController nameController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('新建笔记'),
+        content: TextField(
+          controller: nameController,
+          decoration: InputDecoration(hintText: '请输入笔记名称'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+            },
+            child: Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              String noteName = nameController.text.trim();
+              if (noteName.isNotEmpty && !_notes.containsKey(noteName)) {
+                setState(() {
+                  _notes[noteName] = jsonEncode([]);
+                  _selectedNote = noteName;
+                  _loadNoteContent(noteName);
+                });
+                _saveNotes();
+              }
+              Navigator.pop(context);
+            },
+            child: Text('创建'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _renameOrDeleteNote(String noteName) {
+    TextEditingController renameController =
+        TextEditingController(text: noteName);
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: Icon(Icons.edit),
+            title: Text('重命名'),
+            onTap: () {
+              Navigator.pop(context);
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: Text('重命名笔记'),
+                  content: TextField(
+                    controller: renameController,
+                    decoration: InputDecoration(hintText: '输入新名称'),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                      },
+                      child: Text('取消'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        String newName = renameController.text.trim();
+                        if (newName.isNotEmpty &&
+                            newName != noteName &&
+                            !_notes.containsKey(newName)) {
+                          setState(() {
+                            _notes[newName] = _notes[noteName]!;
+                            _notes.remove(noteName);
+                            _selectedNote = newName;
+                          });
+                          _saveNotes();
+                        }
+                        Navigator.pop(context);
+                      },
+                      child: Text('确认'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.delete, color: Colors.red),
+            title: Text('删除', style: TextStyle(color: Colors.red)),
+            onTap: () {
+              setState(() {
+                _notes.remove(noteName);
+                if (_notes.isNotEmpty) {
+                  _selectedNote = _notes.keys.first;
+                  _loadNoteContent(_selectedNote);
+                } else {
+                  _selectedNote = "";
+                  _controller = quill.QuillController.basic();
+                }
+              });
+              _saveNotes();
+              Navigator.pop(context);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _saveCurrentNote() {
+    if (_selectedNote.isNotEmpty) {
+      setState(() {
+        _notes[_selectedNote] = jsonEncode(_controller.document.toDelta().toJson());
+      });
+      _saveNotes();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      drawer: Drawer(
+        child: Column(
+          children: [
+            AppBar(title: Text('笔记列表'), automaticallyImplyLeading: false),
+            Expanded(
+              child: ListView.builder(
+                itemCount: _notes.keys.length,
+                itemBuilder: (context, index) {
+                  String noteName = _notes.keys.elementAt(index);
+                  return ListTile(
+                    title: Text(noteName),
+                    selected: noteName == _selectedNote,
+                    onTap: () {
+                      setState(() {
+                        _selectedNote = noteName;
+                        _loadNoteContent(noteName);
+                      });
+                      Navigator.pop(context);
+                    },
+                    onLongPress: () {
+                      _renameOrDeleteNote(noteName);
+                    },
+                  );
+                },
+              ),
+            ),
+            Divider(),
+            ListTile(
+              leading: Icon(Icons.add),
+              title: Text('添加笔记'),
+              onTap: _addNote,
+            ),
+          ],
+        ),
+      ),
+      appBar: AppBar(
+        title: Text(_selectedNote.isEmpty ? '请选择笔记' : _selectedNote),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.save),
+            onPressed: _saveCurrentNote,
+          ),
+        ],
+      ),
+      body: _selectedNote.isEmpty
+          ? Center(child: Text('没有选中的笔记'))
+          : Column(
+              children: [
+                quill.QuillToolbar.basic(controller: _controller),
+                Expanded(
+                  child: quill.QuillEditor.basic(
+                    controller: _controller,
+                    readOnly: false,
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
